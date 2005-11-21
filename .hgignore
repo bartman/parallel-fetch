@@ -1,0 +1,7 @@
+^\.
+~$
+^cscope\.out$
+^cscope\.files$
+^tags$
+\.o$
+^pf$
