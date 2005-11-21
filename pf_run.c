@@ -24,8 +24,13 @@ typedef struct {
         // display
         struct timeval  next_update;
         struct timeval  update_delta;
+
         // agents
         pf_ctx_t       *agents;
+
+        // number of words in masks to accomodate the conf->no_agents
+        size_t mask_long_cnt;
+
         // which ones have sockets
         uint            ctx_has_sock_count;
         ulong          *ctx_has_sock_mask;
@@ -51,7 +56,6 @@ pf_run (const pf_conf_t *conf)
 {
         int rc;
         uint i;
-        size_t mask_long_cnt;
         pf_state_t state;
 
         memset (&state, 0, sizeof (state));
@@ -66,15 +70,15 @@ pf_run (const pf_conf_t *conf)
         if (!state.agents) BAIL ("failed to allocate array");
 
         // allocate state masks
-        mask_long_cnt = 2 + (conf->no_agents/(sizeof(ulong) * 8));
+        state.mask_long_cnt = 2 + (conf->no_agents/(sizeof(ulong) * 8));
 
-        state.ctx_has_sock_mask = calloc (mask_long_cnt, sizeof (ulong));
+        state.ctx_has_sock_mask = calloc (state.mask_long_cnt, sizeof (ulong));
         if (!state.ctx_has_sock_mask) BAIL ("failed to allocate array");
 
-        state.ctx_need_conn_mask = calloc (mask_long_cnt, sizeof (ulong));
+        state.ctx_need_conn_mask = calloc (state.mask_long_cnt, sizeof (ulong));
         if (!state.ctx_need_conn_mask) BAIL ("failed to allocate array");
 
-        state.ctx_did_conn_mask = calloc (mask_long_cnt, sizeof (ulong));
+        state.ctx_did_conn_mask = calloc (state.mask_long_cnt, sizeof (ulong));
         if (!state.ctx_did_conn_mask) BAIL ("failed to allocate array");
 
         // initialize
@@ -105,7 +109,7 @@ pf_run (const pf_conf_t *conf)
                         pf_ctx_t *ctx;
 
                         DBG (2, "  ctx_has_sock_mask: ");
-                        for (i=0; i<mask_long_cnt; i++)
+                        for (i=0; i<state.mask_long_cnt; i++)
                                 DBG (2, "%08lx ", state.ctx_has_sock_mask[i]);
                         DBG (2, "\n");
 
@@ -138,7 +142,7 @@ pf_run (const pf_conf_t *conf)
                         pf_ctx_t *ctx;
 
                         DBG (2, "  ctx_need_conn_mask: ");
-                        for (i=0; i<mask_long_cnt; i++)
+                        for (i=0; i<state.mask_long_cnt; i++)
                                 DBG (2, "%08lx ", state.ctx_need_conn_mask[i]);
                         DBG (2, "\n");
 
