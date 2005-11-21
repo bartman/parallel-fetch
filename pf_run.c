@@ -21,9 +21,13 @@
 
 typedef struct {
         const pf_conf_t *conf;
-        // display
+
+        // display throdling
         struct timeval  next_update;
         struct timeval  update_delta;
+
+        // timing information
+        struct timeval  start_time;
 
         // variables for select
         uint max_fd;
@@ -52,13 +56,14 @@ typedef struct {
 
 // ------------------------------------------------------------------------
 
-static void pf_state_display (pf_state_t *state, int force);
 static int pf_state_init (pf_state_t *state, const pf_conf_t *conf);
+static void pf_state_cleanup (pf_state_t *state);
 static int pf_state_open_sockets (pf_state_t *state);
 static int pf_state_create_connections (pf_state_t *state);
 static int pf_state_prepare_for_io (pf_state_t *state);
 static int pf_state_perform_select (pf_state_t *state);
 static int pf_state_perform_io (pf_state_t *state);
+static void pf_state_display (pf_state_t *state, int force);
 
 // ------------------------------------------------------------------------
 
@@ -123,9 +128,8 @@ pf_run (const pf_conf_t *conf)
         }
         pf_state_display (&state, 1);
         DBG (0, "\n");
-        DBG (0, "finished %d (%d retried)\n", 
-                        state.no_completed,
-                        state.no_failed);
+
+        pf_state_cleanup (&state);
 
         return 0;
 }
@@ -137,11 +141,14 @@ pf_state_init (pf_state_t *s, const pf_conf_t *conf)
 {
         uint i;
 
-        memset (s, 0, sizeof (s));
+        memset (s, 0, sizeof (*s));
         s->conf = conf;
 
+        // timing
+        gettimeofday (&s->start_time, NULL);
+
         // display config
-        gettimeofday (&s->next_update, NULL);
+        s->next_update  = s->start_time;
         s->update_delta = (struct timeval) {0,10000};
 
         // allocate agents
@@ -166,6 +173,15 @@ pf_state_init (pf_state_t *s, const pf_conf_t *conf)
                 pf_ctx_init (&s->agents[i], conf);
 
         return 0;
+}
+
+static void
+pf_state_cleanup (pf_state_t *s)
+{
+        free(s->ctx_has_sock_mask);
+        free(s->ctx_need_conn_mask);
+        free(s->ctx_did_conn_mask);
+        free (s->agents);
 }
 
 static int 
@@ -388,14 +404,14 @@ pf_state_display (pf_state_t *s, int force)
 {
         int do_display = force;
         const pf_conf_t *conf = s->conf;
+        struct timeval now, diff;
+
+        gettimeofday (&now, NULL);
 
         if (dbg_level > 0)
                 do_display = 1;
 
         else if (!force && dbg_level == 0) {
-                struct timeval now;
-
-                gettimeofday (&now, NULL);
 
                 do_display = 0;
                 if (! timercmp(&s->next_update, &now, >)) {
@@ -405,9 +421,21 @@ pf_state_display (pf_state_t *s, int force)
                 }
         }
 
-        if (do_display)
-                printf ("completed %u/%u  (sock %u, need_conn %u, did_conn %u)           \r", 
-                        s->no_completed, conf->no_connections, s->ctx_has_sock_count, 
-                        s->ctx_need_conn_count, s->ctx_did_conn_count);
+        if (do_display) {
+                double us, conn_per_sec;
+
+                timersub (&now, &s->start_time, &diff);
+
+                us = diff.tv_sec + diff.tv_sec/1000000.0;
+
+                conn_per_sec = s->no_completed / us;
+
+                printf ("completed %u/%u  %f conn/s  "
+                        "(sock %u, start %u, conn %u), fail %u           \r", 
+                        s->no_completed, conf->no_connections, 
+                        conn_per_sec,
+                        s->ctx_has_sock_count, s->ctx_need_conn_count, 
+                        s->ctx_did_conn_count, s->no_failed);
+        }
 }
 
