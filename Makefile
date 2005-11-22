@@ -1,5 +1,6 @@
 
 CFLAGS=-ggdb -pg -O2 -Wall
+LIBS=-lpthread
 
 PROG=pf
 SRCS=pf_ctx.c pf_http.c pf_main.c pf_run.c
@@ -16,7 +17,7 @@ include ${EXISTING_DEPS}
 endif
 
 ${PROG}: ${OBJS}
-	${CC} -o $@ $^
+	${CC} ${LIBS} -o $@ $^
 
 ${OBJS}: %.o: %.c Makefile
 

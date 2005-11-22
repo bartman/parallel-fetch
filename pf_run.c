@@ -16,18 +16,13 @@
 #include "pf_dbg.h"
 #include "pf_ctx.h"
 #include "pf_conf.h"
+#include "pf_stat.h"
 
 // ------------------------------------------------------------------------
 
 typedef struct {
         const pf_conf_t *conf;
-
-        // display throdling
-        struct timeval  next_update;
-        struct timeval  update_delta;
-
-        // timing information
-        struct timeval  start_time;
+        pf_stat_t       *stat;
 
         // variables for select
         uint max_fd;
@@ -49,6 +44,7 @@ typedef struct {
         // which ones have connected
         uint            ctx_did_conn_count;
         ulong          *ctx_did_conn_mask;
+
         // what is completed
         uint            no_failed;
         uint            no_completed;
@@ -56,24 +52,23 @@ typedef struct {
 
 // ------------------------------------------------------------------------
 
-static int pf_run_init (pf_run_t *run, const pf_conf_t *conf);
+static int pf_run_init (pf_run_t *run, const pf_conf_t *conf, pf_stat_t *stat);
 static void pf_run_cleanup (pf_run_t *run);
 static int pf_run_open_sockets (pf_run_t *run);
 static int pf_run_create_connections (pf_run_t *run);
 static int pf_run_prepare_for_io (pf_run_t *run);
 static int pf_run_perform_select (pf_run_t *run);
 static int pf_run_perform_io (pf_run_t *run);
-static void pf_run_display (pf_run_t *run, int force);
 
 // ------------------------------------------------------------------------
 
 int 
-pf_run (const pf_conf_t *conf)
+pf_run (const pf_conf_t *conf, pf_stat_t *stat)
 {
         int rc;
         pf_run_t run;
 
-        rc = pf_run_init (&run, conf);
+        rc = pf_run_init (&run, conf, stat);
         if (rc<0) {
                 DBG (1, "failed to init state structure, rc=%d\n", rc);
                 return rc;
@@ -84,7 +79,10 @@ pf_run (const pf_conf_t *conf)
         while (run.no_completed < conf->no_connections) {
 
                 DBG (1, "\n------------------------------------------------------------\n");
-                pf_run_display (&run, 0);
+                DBG (1, "completed %u/%u  (sock %u, start %u, conn %u), fail %u", 
+                        run.no_completed, conf->no_connections, 
+                        run.ctx_has_sock_count, run.ctx_need_conn_count, 
+                        run.ctx_did_conn_count, run.no_failed);
                 DBG (1, "\n");
 
                 // open new sockets
@@ -126,8 +124,7 @@ pf_run (const pf_conf_t *conf)
                 }
 
         }
-        pf_run_display (&run, 1);
-        DBG (0, "\n");
+        DBG (1, "\n");
 
         pf_run_cleanup (&run);
 
@@ -137,19 +134,13 @@ pf_run (const pf_conf_t *conf)
 // ------------------------------------------------------------------------
 
 static int 
-pf_run_init (pf_run_t *r, const pf_conf_t *conf)
+pf_run_init (pf_run_t *r, const pf_conf_t *conf, pf_stat_t *stat)
 {
         uint i;
 
         memset (r, 0, sizeof (*r));
         r->conf = conf;
-
-        // timing
-        gettimeofday (&r->start_time, NULL);
-
-        // display config
-        r->next_update  = r->start_time;
-        r->update_delta = (struct timeval) {0,10000};
+        r->stat = stat;
 
         // allocate agents
         r->agents = calloc (conf->no_agents, sizeof (pf_ctx_t));
@@ -170,7 +161,7 @@ pf_run_init (pf_run_t *r, const pf_conf_t *conf)
         // initialize
         DBG (1, "initialzie contexts\n");
         for (i=0; i<conf->no_agents; i++)
-                pf_ctx_init (&r->agents[i], conf);
+                pf_ctx_init (&r->agents[i], conf, stat);
 
         return 0;
 }
@@ -266,6 +257,7 @@ pf_run_create_connections (pf_run_t *r)
                         r->ctx_need_conn_count --;
 
                         r->no_failed ++;
+                        stat_atomic_inc (r->stat,no_failed);
                         break;
                 }
 
@@ -389,53 +381,16 @@ pf_run_perform_io (pf_run_t *r)
                         clear_bit (i, r->ctx_did_conn_mask);
                         r->ctx_did_conn_count --;
 
-                        if (success)
+                        if (success) {
                                 r->no_completed ++;
-                        else
+                                stat_atomic_inc (r->stat,no_completed);
+                        } else {
                                 r->no_failed ++;
+                                stat_atomic_inc (r->stat,no_failed);
+                        }
                 }
         }
 
         return 0;
-}
-
-static void 
-pf_run_display (pf_run_t *r, int force)
-{
-        int do_display = force;
-        const pf_conf_t *conf = r->conf;
-        struct timeval now, diff;
-
-        gettimeofday (&now, NULL);
-
-        if (dbg_level > 0)
-                do_display = 1;
-
-        else if (!force && dbg_level == 0) {
-
-                do_display = 0;
-                if (! timercmp(&r->next_update, &now, >)) {
-                        do_display = 1;
-
-                        timeradd (&now, &r->update_delta, &r->next_update);
-                }
-        }
-
-        if (do_display) {
-                double us, conn_per_sec;
-
-                timersub (&now, &r->start_time, &diff);
-
-                us = diff.tv_sec + diff.tv_sec/1000000.0;
-
-                conn_per_sec = r->no_completed / us;
-
-                printf ("completed %u/%u  %f conn/r  "
-                        "(sock %u, start %u, conn %u), fail %u           \r", 
-                        r->no_completed, conf->no_connections, 
-                        conn_per_sec,
-                        r->ctx_has_sock_count, r->ctx_need_conn_count, 
-                        r->ctx_did_conn_count, r->no_failed);
-        }
 }
 

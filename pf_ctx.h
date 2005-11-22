@@ -2,10 +2,12 @@
 #define __included__pf_ctx_h__
 
 struct pf_conf_s;
+struct pf_stat_s;
 
 typedef struct pf_ctx_s {
         // the configuration
         const struct pf_conf_s *conf;
+        struct pf_stat_s       *stat;
 
         // the socket
         int                     fd;
@@ -20,7 +22,8 @@ typedef struct pf_ctx_s {
         uint32_t                wants_to_send_more:1;
 } pf_ctx_t;
 
-extern void pf_ctx_init (pf_ctx_t *ctx, const struct pf_conf_s *conf);
+extern void pf_ctx_init (pf_ctx_t *ctx, const struct pf_conf_s *conf, 
+                struct pf_stat_s *stat);
 extern void pf_ctx_reset (pf_ctx_t *ctx);
 extern int pf_ctx_new (pf_ctx_t *ctx);
 extern int pf_ctx_connect (pf_ctx_t *ctx);

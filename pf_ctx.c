@@ -8,10 +8,11 @@
 #include "pf_conf.h"
 
 void
-pf_ctx_init (pf_ctx_t *ctx, const pf_conf_t *conf)
+pf_ctx_init (pf_ctx_t *ctx, const pf_conf_t *conf, struct pf_stat_s *stat)
 {
         memset (ctx, 0, sizeof (*ctx));
         ctx->conf = conf;
+        ctx->stat = stat;
         ctx->fd = -1;
 }
 
@@ -19,7 +20,8 @@ void
 pf_ctx_reset (pf_ctx_t *ctx)
 {
         const struct pf_conf_s *conf = ctx->conf;;
-        pf_ctx_init (ctx, conf);
+        struct pf_stat_s *stat = ctx->stat;
+        pf_ctx_init (ctx, conf, stat);
 }
 
 int 
