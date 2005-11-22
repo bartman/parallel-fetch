@@ -1,5 +1,5 @@
 
-CFLAGS=-ggdb -O01 -Wall
+CFLAGS=-ggdb -pg -O2 -Wall
 
 PROG=pf
 SRCS=pf_ctx.c pf_http.c pf_main.c pf_run.c
