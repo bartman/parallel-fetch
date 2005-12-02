@@ -96,6 +96,7 @@ main (void)
         conf.do_connected = http_connected;
         conf.do_recv = http_recv;
         conf.do_send = http_send;
+        conf.do_closing = http_closing;
 
         // set number of connections
         conf.no_agents = minfo.no_agents;

@@ -65,3 +65,8 @@ http_send (pf_ctx_t *ctx)
         return rc;
 }
 
+int 
+http_closing (pf_ctx_t *ctx, int rc)
+{
+        return 0;
+}

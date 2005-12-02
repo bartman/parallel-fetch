@@ -15,6 +15,7 @@ typedef struct pf_conf_s {
         int (*do_connected) (struct pf_ctx_s *ctx);
         int (*do_send) (struct pf_ctx_s *ctx);
         int (*do_recv) (struct pf_ctx_s *ctx);
+        int (*do_closing) (struct pf_ctx_s *ctx, int rc);
 
         // definition of the test
         uint                    no_agents;
