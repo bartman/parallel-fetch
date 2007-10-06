@@ -66,7 +66,7 @@ main (void)
         memset (&minfo, 0, sizeof (minfo));
 
         // should read this from command line
-        minfo.srv_addr = "192.168.10.7";
+        minfo.srv_addr = "192.168.1.15";
         minfo.srv_port = "80";
         minfo.no_threads = 10;
         minfo.no_agents = 10;
@@ -127,7 +127,7 @@ main (void)
 
                 pthread_join (threads[t], &ret);
 
-                rc = (int)ret;
+                rc = (int)(long)ret;
 
                 printf ("stopped thread %u\n", t);
         }
@@ -145,7 +145,7 @@ thread_helper (void *arg)
 
         rc = pf_run (minfo->conf, minfo->stat);
 
-        return (void*)rc;
+        return (void*)(long)rc;
 }
 
 // ------------------------------------------------------------------------
@@ -153,7 +153,7 @@ thread_helper (void *arg)
 static void 
 pf_display (pf_main_info_t *minfo)
 {
-        const pf_conf_t *conf = minfo->conf;
+        //const pf_conf_t *conf = minfo->conf;
         pf_stat_t       *stat = minfo->stat;
         struct timeval now, diff;
         double us, conn_per_sec;
