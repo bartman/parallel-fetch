@@ -44,7 +44,11 @@ int
 http_send (pf_ctx_t *ctx)
 {
         int rc;
-        const char get[] = "GET /\n\n";
+        //const char get[] = "GET /\n\n";
+        const char get[] =
+		"GET / HTTP/1.0\n"
+		"User-Agent: pf\n"
+		"\n";
 
         // only once
         if (ctx->send_cnt)

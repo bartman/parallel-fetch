@@ -108,7 +108,7 @@ pf_run (const pf_conf_t *conf, pf_stat_t *stat)
 
         DBG (1, "main loop\n");
         // main loop
-        while (run.no_completed < conf->no_connections) {
+        while (run.no_completed < conf->no_connections && !conf->kill_switch) {
 
                 DBG (1, "\n------------------------------------------------------------\n");
                 DBG (1, "completed %u/%u  (sock %u, start %u, conn %u), fail %u", 
@@ -355,12 +355,13 @@ static int
 pf_run_perform_select (pf_run_t *r)
 {
         int rc;
+	struct timeval to = { .tv_sec = 5, .tv_usec = 0 };
 
         DBG (1, "\n - selecting (r=%u, w=%u, e=%u)\n", 
                         r->rd_cnt, r->wr_cnt, r->er_cnt);
 
         // wait for events
-        rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, NULL);
+        rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, &to);
         DBG (2, "  return %d\n", rc);
 
         return rc;

@@ -10,7 +10,7 @@
                 fprintf (stderr, "ERROR: %s +%d\n", __FUNCTION__, __LINE__); \
                 if (errno) fprintf (stderr, "ERROR: %s\n", strerror (errno)); \
                 fprintf (stderr, "ERROR: " fmt "\n", ##a); \
-                exit(-1); \
+		exit(EXIT_FAILURE); \
                 })
 
 

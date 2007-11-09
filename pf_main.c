@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -50,8 +51,14 @@ static void pf_display (pf_main_info_t *minfo);
 
 // ------------------------------------------------------------------------
 
+static void show_help(void)
+{
+	printf ("pf [-t <threads>] [-a <agents>] "
+		"[-c <connections>] [-h] <host> <port>\n");
+}
+
 int
-main (void)
+main (int argc, char *argv[])
 {
         int rc;
         pf_conf_t conf;
@@ -60,18 +67,61 @@ main (void)
         pthread_t *threads;
         ulong tmp;
         uint t;
+	int opt;
 
         memset (&conf, 0, sizeof (conf));
         memset (&stat, 0, sizeof (stat));
         memset (&minfo, 0, sizeof (minfo));
 
-        // should read this from command line
-        minfo.srv_addr = "192.168.1.15";
-        minfo.srv_port = "80";
+        // read configuration from command line
+        minfo.srv_addr = NULL;
+        minfo.srv_port = NULL;
         minfo.no_threads = 10;
         minfo.no_agents = 10;
-        minfo.total_connections = 1000;
+        minfo.total_connections = 100000;
         minfo.no_connections = minfo.total_connections / minfo.no_threads;
+
+	while ((opt = getopt (argc, argv, "t:a:c:h")) != -1) {
+		switch (opt) {
+		case 'h':
+			show_help();
+			return 0;
+		case 't':
+			minfo.no_threads = atoi(optarg);
+			break;
+		case 'a':
+			minfo.no_agents = atoi(optarg);
+			break;
+		case 'c':
+			minfo.total_connections = atoi(optarg);
+			break;
+		default:
+			show_help();
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	if ((argc - optind) != 2)
+		BAIL ("need to provide <host> and <port>");
+	if (minfo.no_agents < 1)
+		BAIL ("need at least one agent per thread");
+	if (minfo.no_threads < 1)
+		BAIL ("need at least one thread");
+	if (minfo.total_connections < 1)
+		BAIL ("need at least one connection");
+
+        minfo.srv_addr = argv[optind];
+        minfo.srv_port = argv[optind+1];
+
+	printf ("connect to %s:%s\n"
+		"%9u threads\n"
+		"%9u agents per thread\n"
+		"%9u total connections\n",
+		minfo.srv_addr,
+		minfo.srv_port,
+		minfo.no_threads,
+		minfo.no_agents,
+		minfo.total_connections);
 
         // configure main info structure
         minfo.conf = &conf;
@@ -101,6 +151,7 @@ main (void)
         // set number of connections
         conf.no_agents = minfo.no_agents;
         conf.no_connections = minfo.no_connections;
+	conf.kill_switch = 0;
 
         // threading
         threads = calloc (minfo.no_threads, sizeof (pthread_t));
@@ -119,6 +170,9 @@ main (void)
                 pf_display (&minfo);
         }
         printf ("\n");
+
+	// force kill
+	conf.kill_switch = 1;
 
         for (t=0; t<minfo.no_threads; t++) {
 
