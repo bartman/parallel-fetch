@@ -11,44 +11,13 @@
 #include <arpa/inet.h>
 
 #include <sys/time.h>
-#include <asm/bitops.h>
+//#include <asm/bitops.h>
 
 #include "pf_dbg.h"
 #include "pf_ctx.h"
 #include "pf_conf.h"
 #include "pf_stat.h"
-
-#ifndef BITS_PER_LONG
-#define BITS_PER_LONG (sizeof(long)*8)
-#endif
-
-/**
- * find_first_bit - find the first set bit in a memory region
- * @data: The address to start the search at
- * @max: The maximum size to search
- *
- * Returns the bit-number of the first set bit, not the number of the byte
- * containing a bit.
- */
-static inline unsigned int my_find_first_bit (unsigned long *data, size_t max)
-{
-	size_t n;
-	for (n=0; n<max; n++) {
-		if (test_bit (n, data))
-			return n;
-	}
-	return max;
-}
-
-static inline unsigned int my_find_first_zero_bit (unsigned long *data, size_t max)
-{
-	size_t n;
-	for (n=0; n<max; n++) {
-		if (! test_bit (n, data))
-			return n;
-	}
-	return max;
-}
+#include "pf_bitops.h"
 
 // ------------------------------------------------------------------------
 

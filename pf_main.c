@@ -12,7 +12,7 @@
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <asm/bitops.h>
+//#include <asm/bitops.h>
 
 #include "pf_dbg.h"
 #include "pf_http.h"
