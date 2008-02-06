@@ -18,6 +18,7 @@
 #include "pf_conf.h"
 #include "pf_stat.h"
 #include "pf_bitops.h"
+#include "pf_list.h"
 
 // ------------------------------------------------------------------------
 
@@ -33,18 +34,9 @@ typedef struct {
         // agents
         pf_ctx_t       *agents;
 
-        // number of words in masks to accomodate the conf->no_agents
-        size_t mask_long_cnt;
-
-        // which ones have sockets
-        uint            ctx_has_sock_count;
-        ulong          *ctx_has_sock_mask;
-        // which ones need to connect
-        uint            ctx_need_conn_count;
-        ulong          *ctx_need_conn_mask;
-        // which ones have connected
-        uint            ctx_did_conn_count;
-        ulong          *ctx_did_conn_mask;
+	// a list per state
+	struct list_head state_list[PF_CTX_STATE_MAX];
+	uint		state_count[PF_CTX_STATE_MAX];
 
         // what is completed
         uint            no_failed;
@@ -80,10 +72,12 @@ pf_run (const pf_conf_t *conf, pf_stat_t *stat)
         while (run.no_completed < conf->no_connections && !conf->kill_switch) {
 
                 DBG (1, "\n------------------------------------------------------------\n");
-                DBG (1, "completed %u/%u  (sock %u, start %u, conn %u), fail %u", 
+                DBG (1, "completed %u/%u  (avail %u, conn %u, active %u), fail %u", 
                         run.no_completed, conf->no_connections, 
-                        run.ctx_has_sock_count, run.ctx_need_conn_count, 
-                        run.ctx_did_conn_count, run.no_failed);
+			run.state_count[PF_CTX_AVAIL],
+			run.state_count[PF_CTX_CONN],
+			run.state_count[PF_CTX_ACTIVE],
+                        run.no_failed);
                 DBG (1, "\n");
 
                 // open new sockets
@@ -147,252 +141,232 @@ pf_run_init (pf_run_t *r, const pf_conf_t *conf, pf_stat_t *stat)
         r->agents = calloc (conf->no_agents, sizeof (pf_ctx_t));
         if (!r->agents) BAIL ("failed to allocate array");
 
-        // allocate state masks
-        r->mask_long_cnt = 2 + (conf->no_agents/(sizeof(ulong) * 8));
+	for (i=0; i<PF_CTX_STATE_MAX; i++)
+		INIT_LIST_HEAD (&r->state_list[i]);
 
-        r->ctx_has_sock_mask = calloc (r->mask_long_cnt, sizeof (ulong));
-        if (!r->ctx_has_sock_mask) BAIL ("failed to allocate array");
+	// initialize
+	DBG (1, "initialzie contexts\n");
+	for (i=0; i<conf->no_agents; i++) {
+		pf_ctx_t *ctx = &r->agents[i];
+		pf_ctx_init (ctx, conf, stat);
+		ctx->number = i;
+		list_add_tail (&ctx->link,
+				&r->state_list[ctx->state]);
+		r->state_count[ctx->state]++;
+	}
 
-        r->ctx_need_conn_mask = calloc (r->mask_long_cnt, sizeof (ulong));
-        if (!r->ctx_need_conn_mask) BAIL ("failed to allocate array");
-
-        r->ctx_did_conn_mask = calloc (r->mask_long_cnt, sizeof (ulong));
-        if (!r->ctx_did_conn_mask) BAIL ("failed to allocate array");
-
-        // initialize
-        DBG (1, "initialzie contexts\n");
-        for (i=0; i<conf->no_agents; i++)
-                pf_ctx_init (&r->agents[i], conf, stat);
-
-        return 0;
+	return 0;
 }
 
 static void
 pf_run_cleanup (pf_run_t *r)
 {
-        free(r->ctx_has_sock_mask);
-        free(r->ctx_need_conn_mask);
-        free(r->ctx_did_conn_mask);
-        free (r->agents);
+	free (r->agents);
 }
 
 static int 
 pf_run_open_sockets (pf_run_t *r)
 {
-        int rc;
-        uint i;
-        const pf_conf_t *conf = r->conf;
+	int rc;
+	const pf_conf_t *conf = r->conf;
 
-        DBG (2, "\n - open sockets\n");
-        while (r->ctx_has_sock_count < conf->no_agents) {
+	DBG (2, "\n - open sockets\n");
+	while (! list_empty (&r->state_list[PF_CTX_AVAIL])) {
+		struct list_head *first;
+		pf_ctx_t *ctx;
 
-                pf_ctx_t *ctx;
+		// get the first available one
+		first = r->state_list[PF_CTX_AVAIL].next;
 
-                DBG (2, "  ctx_has_sock_mask: ");
-                for (i=0; i<r->mask_long_cnt; i++)
-                        DBG (2, "%08lx ", r->ctx_has_sock_mask[i]);
-                DBG (2, "\n");
+		ctx = list_entry (first, pf_ctx_t, link);
 
-                // find one that is not being used
-                i = my_find_first_zero_bit (r->ctx_has_sock_mask,
-                                conf->no_agents);
-                if (i >= conf->no_agents)
-                        BAIL ("failed to find free agent (cnt=%d/%d)",
-                                        r->ctx_has_sock_count, conf->no_agents);
+		DBG (2, "  new socket on agent %u/%u\n",
+				ctx->number, conf->no_agents);
 
-                DBG (2, "  new socket on agent %u/%u\n", i, conf->no_agents);
-                ctx = &r->agents[i];
+		// start it up
+		rc = pf_ctx_socket (ctx);
+		if (rc<0) break;
 
-                // start it up
-                rc = pf_ctx_new (ctx);
-                if (rc<0) break;
+		// remove from avail state
+		list_del (first);
+		r->state_count[PF_CTX_AVAIL]--;
 
-                // update state
-                set_bit (i, r->ctx_has_sock_mask);
-                r->ctx_has_sock_count ++;
-
-                set_bit (i, r->ctx_need_conn_mask);
-                r->ctx_need_conn_count ++;
-        }
-        return 0;
+		// put into need-conn state
+		ctx->state = PF_CTX_CONN;
+		list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+		r->state_count[ctx->state]++;
+	}
+	return 0;
 }
 
 static int 
 pf_run_create_connections (pf_run_t *r)
 {
-        int rc;
-        uint i;
-        const pf_conf_t *conf = r->conf;
+	int rc;
+	const pf_conf_t *conf = r->conf;
 
-        DBG (2, "\n - start connections\n");
-        while (r->ctx_need_conn_count) {
+	DBG (2, "\n - start connections\n");
+	while (! list_empty (&r->state_list[PF_CTX_CONN])) {
+		struct list_head *first;
+		pf_ctx_t *ctx;
 
-                pf_ctx_t *ctx;
+		// get the first available one
+		first = r->state_list[PF_CTX_CONN].next;
 
-                DBG (2, "  ctx_need_conn_mask: ");
-                for (i=0; i<r->mask_long_cnt; i++)
-                        DBG (2, "%08lx ", r->ctx_need_conn_mask[i]);
-                DBG (2, "\n");
+		ctx = list_entry (first, pf_ctx_t, link);
 
-                // find one that is not being used
-                i = my_find_first_bit (r->ctx_need_conn_mask,
-                                conf->no_agents);
-                DBG (2, "  %u\n",i);
-                if (i >= conf->no_agents)
-                        BAIL ("failed to find agent for connection (cnt=%d/%d)",
-                                        r->ctx_need_conn_count, conf->no_agents);
+		DBG (1, "  new connection on agent %u/%u\n", ctx->number, conf->no_agents);
 
-                DBG (1, "  new connection on agent %u/%u\n", i, conf->no_agents);
-                ctx = &r->agents[i];
+		// remove from avail state
+		list_del (first);
+		r->state_count[PF_CTX_CONN]--;
 
-                rc = pf_ctx_connect (ctx);
-                if (rc<0) {
-                        DBG (0, "  - failed to connect %u/%u\n", i, conf->no_agents);
+		// connect
+		rc = pf_ctx_connect (ctx);
+		if (rc<0) {
+			DBG (0, "  - failed to connect %u/%u\n", ctx->number, conf->no_agents);
 
-                        pf_ctx_close (ctx);
-                        pf_ctx_reset (ctx);
+			pf_ctx_close (ctx);
+			pf_ctx_reset (ctx);
 
-                        clear_bit (i, r->ctx_has_sock_mask);
-                        r->ctx_has_sock_count --;
-                        clear_bit (i, r->ctx_need_conn_mask);
-                        r->ctx_need_conn_count --;
+			// put into avail state
+			ctx->state = PF_CTX_AVAIL;
+			list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+			r->state_count[ctx->state]++;
 
-                        r->no_failed ++;
-                        stat_atomic_inc (r->stat,no_failed);
-                        break;
-                }
+			r->no_failed ++;
+			stat_atomic_inc (r->stat,no_failed);
+			break;
+		}
 
-                conf->do_connected (ctx);
+		conf->do_connected (ctx);
 
-                // update state
-                clear_bit (i, r->ctx_need_conn_mask);
-                r->ctx_need_conn_count --;
+		// put into active state
+		ctx->state = PF_CTX_ACTIVE;
+		list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+		r->state_count[ctx->state]++;
+	}
 
-                set_bit (i, r->ctx_did_conn_mask);
-                r->ctx_did_conn_count ++;
-        }
-
-        return 0;
+	return 0;
 }
 
 static int 
 pf_run_prepare_for_io (pf_run_t *r)
 {
-        uint i;
-        const pf_conf_t *conf = r->conf;
+	pf_ctx_t *ctx;
+	const pf_conf_t *conf = r->conf;
 
-        r->max_fd = 0;
-        FD_ZERO (&r->rd_set);
-        FD_ZERO (&r->wr_set);
-        FD_ZERO (&r->er_set);
-        r->rd_cnt = r->wr_cnt = r->er_cnt = 0;
+	r->max_fd = 0;
+	FD_ZERO (&r->rd_set);
+	FD_ZERO (&r->wr_set);
+	FD_ZERO (&r->er_set);
+	r->rd_cnt = r->wr_cnt = r->er_cnt = 0;
 
-        // figure out what to select on
-        DBG (2, "\n - select selection\n");
-        for (i=0; i<conf->no_agents; i++) {
-                pf_ctx_t *ctx = &r->agents[i];
+	// figure out what to select on
+	DBG (2, "\n - select selection\n");
+	list_for_each_entry (ctx, &r->state_list[PF_CTX_ACTIVE], link) {
 
-                // only those in connection are eligable
-                if (! test_bit (i, r->ctx_did_conn_mask))
-                        continue;
+		DBG (2, "  doing IO on %u/%u %s\n", ctx->number, conf->no_agents,
+				(ctx->wants_to_send_more) ? "[W]" : "");
 
-                DBG (2, "  doing IO on %u/%u %s\n", i, conf->no_agents,
-                                (ctx->wants_to_send_more) ? "[W]" : "");
+		if (r->max_fd < ctx->fd)
+			r->max_fd = ctx->fd;
 
-                if (r->max_fd < ctx->fd)
-                        r->max_fd = ctx->fd;
+		// we always want exceptions
+		FD_SET (ctx->fd, &r->er_set);
+		r->er_cnt ++;
 
-                // we always want exceptions
-                FD_SET (ctx->fd, &r->er_set);
-                r->er_cnt ++;
+		// we always want to read
+		FD_SET (ctx->fd, &r->rd_set);
+		r->rd_cnt ++;
 
-                // we always want to read
-                FD_SET (ctx->fd, &r->rd_set);
-                r->rd_cnt ++;
+		// we sometimes want to write
+		if (ctx->wants_to_send_more) {
+			FD_SET (ctx->fd, &r->wr_set);
+			r->wr_cnt ++;
+		}
+	}
 
-                // we sometimes want to write
-                if (ctx->wants_to_send_more) {
-                        FD_SET (ctx->fd, &r->wr_set);
-                        r->wr_cnt ++;
-                }
-        }
-
-        return 0;
+	return 0;
 }
 
 static int 
 pf_run_perform_select (pf_run_t *r)
 {
-        int rc;
+	int rc;
 	struct timeval to = { .tv_sec = 5, .tv_usec = 0 };
 
-        DBG (1, "\n - selecting (r=%u, w=%u, e=%u)\n", 
-                        r->rd_cnt, r->wr_cnt, r->er_cnt);
+	DBG (1, "\n - selecting (r=%u, w=%u, e=%u)\n", 
+			r->rd_cnt, r->wr_cnt, r->er_cnt);
 
-        // wait for events
-        rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, &to);
-        DBG (2, "  return %d\n", rc);
+	// wait for events
+	rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, &to);
+	DBG (2, "  return %d\n", rc);
 
-        return rc;
+	return rc;
 }
 
 static int 
 pf_run_perform_io (pf_run_t *r)
 {
-        int rc;
-        uint i;
-        const pf_conf_t *conf = r->conf;
+	int rc;
+	const pf_conf_t *conf = r->conf;
+	pf_ctx_t *ctx, *tmp;
 
-        for (i=0; i<conf->no_agents; i++) {
-                pf_ctx_t *ctx = &r->agents[i];
-                int closing = 0;
-                int success = 0;
+	list_for_each_entry_safe (ctx, tmp, &r->state_list[PF_CTX_ACTIVE], link) {
 
-                if (FD_ISSET (ctx->fd, &r->rd_set)) {
+		int closing = 0;
+		int success = 0;
 
-                        DBG (2, "  read on %u/%u\n", i, conf->no_agents);
-                        rc = conf->do_recv (ctx);
-                        DBG (2, "  %d\n", rc);
-                        if (rc<=0) closing = 1;
-                        if (rc==0) success = 1;
-                }
+		if (FD_ISSET (ctx->fd, &r->rd_set)) {
 
-                if (!closing && ctx->wants_to_send_more 
-                                && FD_ISSET (ctx->fd, &r->wr_set)) {
+			DBG (2, "  read on %u/%u\n", ctx->number, conf->no_agents);
+			rc = conf->do_recv (ctx);
+			DBG (2, "  %d\n", rc);
+			if (rc<=0) closing = 1;
+			if (rc==0) success = 1;
+		}
 
-                        DBG (2, "  write on %u/%u\n", i, conf->no_agents);
-                        rc = conf->do_send (ctx);
-                        DBG (2, "  %d\n", rc);
-                        if (rc<=0) closing = 1;
-                }
+		if (!closing && ctx->wants_to_send_more 
+				&& FD_ISSET (ctx->fd, &r->wr_set)) {
 
-                if (!closing && FD_ISSET (ctx->fd, &r->er_set)) {
+			DBG (2, "  write on %u/%u\n", ctx->number, conf->no_agents);
+			rc = conf->do_send (ctx);
+			DBG (2, "  %d\n", rc);
+			if (rc<=0) closing = 1;
+		}
 
-                        BAIL ("exception on %u/%u\n", i, conf->no_agents);
-                        closing = 1;
-                }
+		if (!closing && FD_ISSET (ctx->fd, &r->er_set)) {
 
-                if (closing) {
-                        DBG (1, "  closing %u/%u\n", i, conf->no_agents);
+			BAIL ("exception on %u/%u\n", ctx->number, conf->no_agents);
+			closing = 1;
+		}
 
-                        pf_ctx_close (ctx);
-                        pf_ctx_reset (ctx);
+		if (closing) {
+			DBG (1, "  closing %u/%u\n", ctx->number, conf->no_agents);
 
-                        clear_bit (i, r->ctx_has_sock_mask);
-                        r->ctx_has_sock_count --;
-                        clear_bit (i, r->ctx_did_conn_mask);
-                        r->ctx_did_conn_count --;
+			// remove from active state
+			list_del (&ctx->link);
+			r->state_count[PF_CTX_ACTIVE]--;
 
-                        if (success) {
-                                r->no_completed ++;
-                                stat_atomic_inc (r->stat,no_completed);
-                        } else {
-                                r->no_failed ++;
-                                stat_atomic_inc (r->stat,no_failed);
-                        }
-                }
-        }
+			pf_ctx_close (ctx);
+			pf_ctx_reset (ctx);
 
-        return 0;
+			// put into avail state
+			ctx->state = PF_CTX_AVAIL;
+			list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+			r->state_count[ctx->state]++;
+
+			if (success) {
+				r->no_completed ++;
+				stat_atomic_inc (r->stat,no_completed);
+			} else {
+				r->no_failed ++;
+				stat_atomic_inc (r->stat,no_failed);
+			}
+		}
+	}
+
+	return 0;
 }
 

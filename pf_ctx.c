@@ -14,6 +14,7 @@ pf_ctx_init (pf_ctx_t *ctx, const pf_conf_t *conf, struct pf_stat_s *stat)
         ctx->conf = conf;
         ctx->stat = stat;
         ctx->fd = -1;
+	ctx->state = PF_CTX_AVAIL;
 }
 
 void
@@ -25,7 +26,7 @@ pf_ctx_reset (pf_ctx_t *ctx)
 }
 
 int 
-pf_ctx_new (pf_ctx_t *ctx)
+pf_ctx_socket (pf_ctx_t *ctx)
 {
         int rc;
 

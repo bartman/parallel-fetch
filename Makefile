@@ -1,5 +1,6 @@
 
-CFLAGS=-ggdb -pg -O2 -Wall
+CFLAGS=-ggdb -pg -O0 -Wall
+CPPFLAGS=-I.
 LIBS=-lpthread
 
 PROG=pf
