@@ -13,6 +13,7 @@ enum pf_ctx_state_e {
 	PF_CTX_AVAIL,
 	PF_CTX_CONN,
 	PF_CTX_ACTIVE,
+	PF_CTX_DELAY_CLOSE,
 	PF_CTX_STATE_MAX
 };
 
@@ -34,8 +35,9 @@ typedef struct pf_ctx_s {
         size_t                  recv_cnt;
         size_t                  recv_bytes;
 
-        // flags
-        uint32_t                wants_to_send_more:1;
+	// flags
+	time_t			close_time;
+	uint32_t                wants_to_send_more:1;
 } pf_ctx_t;
 
 extern void pf_ctx_init (pf_ctx_t *ctx, const struct pf_conf_s *conf, 

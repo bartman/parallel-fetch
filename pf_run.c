@@ -52,6 +52,7 @@ static int pf_run_create_connections (pf_run_t *run);
 static int pf_run_prepare_for_io (pf_run_t *run);
 static int pf_run_perform_select (pf_run_t *run);
 static int pf_run_perform_io (pf_run_t *run);
+static int pf_run_check_delayed_close (pf_run_t *run);
 
 // ------------------------------------------------------------------------
 
@@ -118,6 +119,11 @@ pf_run (const pf_conf_t *conf, pf_stat_t *stat)
                         return rc;
                 }
 
+		rc = pf_run_check_delayed_close (&run);
+		if (rc<0) {
+			DBG (1, "failed to perform delayed close, rc=%d\n", rc);
+			return rc;
+		}
         }
         DBG (1, "\n");
 
@@ -299,6 +305,17 @@ pf_run_perform_select (pf_run_t *r)
 	DBG (1, "\n - selecting (r=%u, w=%u, e=%u)\n", 
 			r->rd_cnt, r->wr_cnt, r->er_cnt);
 
+	if (! list_empty (&r->state_list[PF_CTX_DELAY_CLOSE])) {
+		struct list_head *first = r->state_list[PF_CTX_CONN].next;
+		pf_ctx_t *ctx = list_entry (first, pf_ctx_t, link);
+		time_t left = ctx->close_time - time(NULL);
+
+		if (left < 0)
+			to = (struct timeval){ .tv_sec = 0, .tv_usec = 1 };
+		else
+			to.tv_sec = left;
+	}
+
 	// wait for events
 	rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, &to);
 	DBG (2, "  return %d\n", rc);
@@ -349,14 +366,6 @@ pf_run_perform_io (pf_run_t *r)
 			list_del (&ctx->link);
 			r->state_count[PF_CTX_ACTIVE]--;
 
-			pf_ctx_close (ctx);
-			pf_ctx_reset (ctx);
-
-			// put into avail state
-			ctx->state = PF_CTX_AVAIL;
-			list_add_tail (&ctx->link, &r->state_list[ctx->state]);
-			r->state_count[ctx->state]++;
-
 			if (success) {
 				r->no_completed ++;
 				stat_atomic_inc (r->stat,no_completed);
@@ -364,7 +373,53 @@ pf_run_perform_io (pf_run_t *r)
 				r->no_failed ++;
 				stat_atomic_inc (r->stat,no_failed);
 			}
+
+			if (conf->close_delay_sec > 0) {
+
+				ctx->close_time = time(NULL) + conf->close_delay_sec;
+
+				// put into avail state
+				ctx->state = PF_CTX_DELAY_CLOSE;
+				list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+				r->state_count[ctx->state]++;
+
+			} else {
+				pf_ctx_close (ctx);
+				pf_ctx_reset (ctx);
+
+				// put into avail state
+				ctx->state = PF_CTX_AVAIL;
+				list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+				r->state_count[ctx->state]++;
+			}
 		}
+	}
+
+	return 0;
+}
+
+static int pf_run_check_delayed_close (pf_run_t *r)
+{
+	pf_ctx_t *ctx, *tmp;
+	time_t now = time(NULL);
+
+	list_for_each_entry_safe (ctx, tmp, &r->state_list[PF_CTX_DELAY_CLOSE], link) {
+
+		if (ctx->close_time > now)
+			break;
+
+		// remove from waiting state
+		list_del (&ctx->link);
+		r->state_count[PF_CTX_DELAY_CLOSE]--;
+
+		// close
+		pf_ctx_close (ctx);
+		pf_ctx_reset (ctx);
+
+		// put into avail state
+		ctx->state = PF_CTX_AVAIL;
+		list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+		r->state_count[ctx->state]++;
 	}
 
 	return 0;

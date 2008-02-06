@@ -34,8 +34,8 @@ typedef struct pf_main_info_s {
         const char *srv_port;
         uint total_connections;
         uint no_threads;
-        uint no_agents;
-        uint no_connections;
+        uint no_agents_per_thread;
+        uint close_delay_sec;
 
         // thread config and status
         const pf_conf_t        *conf;
@@ -54,7 +54,8 @@ static void pf_display (pf_main_info_t *minfo);
 static void show_help(void)
 {
 	printf ("pf [-t <threads>] [-a <agents>] "
-		"[-c <connections>] [-h] <host> <port>\n");
+		"[-c <connections>] [-d <delay>] "
+		"[-h] <host> <port>\n");
 }
 
 int
@@ -77,11 +78,10 @@ main (int argc, char *argv[])
         minfo.srv_addr = NULL;
         minfo.srv_port = NULL;
         minfo.no_threads = 10;
-        minfo.no_agents = 10;
+        minfo.no_agents_per_thread = 10;
         minfo.total_connections = 100000;
-        minfo.no_connections = minfo.total_connections / minfo.no_threads;
 
-	while ((opt = getopt (argc, argv, "t:a:c:h")) != -1) {
+	while ((opt = getopt (argc, argv, "t:a:c:d:h")) != -1) {
 		switch (opt) {
 		case 'h':
 			show_help();
@@ -90,10 +90,13 @@ main (int argc, char *argv[])
 			minfo.no_threads = atoi(optarg);
 			break;
 		case 'a':
-			minfo.no_agents = atoi(optarg);
+			minfo.no_agents_per_thread = atoi(optarg);
 			break;
 		case 'c':
 			minfo.total_connections = atoi(optarg);
+			break;
+		case 'd':
+			minfo.close_delay_sec = atoi(optarg);
 			break;
 		default:
 			show_help();
@@ -103,7 +106,7 @@ main (int argc, char *argv[])
 
 	if ((argc - optind) != 2)
 		BAIL ("need to provide <host> and <port>");
-	if (minfo.no_agents < 1)
+	if (minfo.no_agents_per_thread < 1)
 		BAIL ("need at least one agent per thread");
 	if (minfo.no_threads < 1)
 		BAIL ("need at least one thread");
@@ -120,7 +123,7 @@ main (int argc, char *argv[])
 		minfo.srv_addr,
 		minfo.srv_port,
 		minfo.no_threads,
-		minfo.no_agents,
+		minfo.no_agents_per_thread,
 		minfo.total_connections);
 
         // configure main info structure
@@ -149,8 +152,9 @@ main (int argc, char *argv[])
         conf.do_closing = http_closing;
 
         // set number of connections
-        conf.no_agents = minfo.no_agents;
-        conf.no_connections = minfo.no_connections;
+        conf.no_agents = minfo.no_agents_per_thread;
+	conf.no_connections = minfo.total_connections / minfo.no_threads;
+	conf.close_delay_sec = minfo.close_delay_sec;
 	conf.kill_switch = 0;
 
         // threading
