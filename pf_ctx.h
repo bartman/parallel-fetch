@@ -12,6 +12,7 @@ struct pf_stat_s;
 enum pf_ctx_state_e {
 	PF_CTX_AVAIL,
 	PF_CTX_CONN,
+	PF_CTX_DELAY_ACTIVE,
 	PF_CTX_ACTIVE,
 	PF_CTX_DELAY_CLOSE,
 	PF_CTX_STATE_MAX
@@ -36,7 +37,7 @@ typedef struct pf_ctx_s {
         size_t                  recv_bytes;
 
 	// flags
-	time_t			close_time;
+	time_t			delay_finish_time;
 	uint32_t                wants_to_send_more:1;
 } pf_ctx_t;
 

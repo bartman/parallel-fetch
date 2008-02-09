@@ -49,6 +49,7 @@ static int pf_run_init (pf_run_t *run, const pf_conf_t *conf, pf_stat_t *stat);
 static void pf_run_cleanup (pf_run_t *run);
 static int pf_run_open_sockets (pf_run_t *run);
 static int pf_run_create_connections (pf_run_t *run);
+static int pf_run_check_delayed_start (pf_run_t *run);
 static int pf_run_prepare_for_io (pf_run_t *run);
 static int pf_run_perform_select (pf_run_t *run);
 static int pf_run_perform_io (pf_run_t *run);
@@ -94,6 +95,12 @@ pf_run (const pf_conf_t *conf, pf_stat_t *stat)
                         DBG (1, "failed to open sockets, rc=%d\n", rc);
                         return rc;
                 }
+
+		rc = pf_run_check_delayed_start (&run);
+		if (rc<0) {
+			DBG (1, "failed to perform delayed start, rc=%d\n", rc);
+			return rc;
+		}
 
                 // prepare the select bits
                 rc = pf_run_prepare_for_io (&run);
@@ -245,9 +252,46 @@ pf_run_create_connections (pf_run_t *r)
 			break;
 		}
 
+		if (conf->start_delay_sec) {
+			// put into delayed active state
+			ctx->state = PF_CTX_DELAY_ACTIVE;
+			ctx->delay_finish_time = time(NULL) + conf->start_delay_sec;
+
+			list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+			r->state_count[ctx->state]++;
+
+		} else {
+			// put into active state
+			conf->do_connected (ctx);
+
+			ctx->state = PF_CTX_ACTIVE;
+
+			list_add_tail (&ctx->link, &r->state_list[ctx->state]);
+			r->state_count[ctx->state]++;
+		}
+	}
+
+	return 0;
+}
+
+static int pf_run_check_delayed_start (pf_run_t *r)
+{
+	pf_ctx_t *ctx, *tmp;
+	const pf_conf_t *conf = r->conf;
+	time_t now = time(NULL);
+
+	list_for_each_entry_safe (ctx, tmp, &r->state_list[PF_CTX_DELAY_ACTIVE], link) {
+
+		if (ctx->delay_finish_time > now)
+			break;
+
+		// remove from waiting state
+		list_del (&ctx->link);
+		r->state_count[PF_CTX_DELAY_ACTIVE]--;
+
 		conf->do_connected (ctx);
 
-		// put into active state
+		// put into avail state
 		ctx->state = PF_CTX_ACTIVE;
 		list_add_tail (&ctx->link, &r->state_list[ctx->state]);
 		r->state_count[ctx->state]++;
@@ -296,6 +340,40 @@ pf_run_prepare_for_io (pf_run_t *r)
 	return 0;
 }
 
+static void
+pf_run_calculate_timeout (pf_run_t *r, struct timeval *result)
+{
+	if (! list_empty (&r->state_list[PF_CTX_DELAY_CLOSE])) {
+		struct list_head *first = r->state_list[PF_CTX_CONN].next;
+		pf_ctx_t *ctx = list_entry (first, pf_ctx_t, link);
+		time_t left = ctx->delay_finish_time - time(NULL);
+		struct timeval to;
+
+		if (left < 0)
+			to = (struct timeval){ .tv_sec = 0, .tv_usec = 1 };
+		else
+			to.tv_sec = left;
+
+		if (timercmp(result, &to, >))
+			*result = to;
+	}
+
+	if (! list_empty (&r->state_list[PF_CTX_DELAY_ACTIVE])) {
+		struct list_head *first = r->state_list[PF_CTX_CONN].next;
+		pf_ctx_t *ctx = list_entry (first, pf_ctx_t, link);
+		time_t left = ctx->delay_finish_time - time(NULL);
+		struct timeval to;
+
+		if (left < 0)
+			to = (struct timeval){ .tv_sec = 0, .tv_usec = 1 };
+		else
+			to.tv_sec = left;
+
+		if (timercmp(result, &to, >))
+			*result = to;
+	}
+}
+
 static int 
 pf_run_perform_select (pf_run_t *r)
 {
@@ -305,16 +383,7 @@ pf_run_perform_select (pf_run_t *r)
 	DBG (1, "\n - selecting (r=%u, w=%u, e=%u)\n", 
 			r->rd_cnt, r->wr_cnt, r->er_cnt);
 
-	if (! list_empty (&r->state_list[PF_CTX_DELAY_CLOSE])) {
-		struct list_head *first = r->state_list[PF_CTX_CONN].next;
-		pf_ctx_t *ctx = list_entry (first, pf_ctx_t, link);
-		time_t left = ctx->close_time - time(NULL);
-
-		if (left < 0)
-			to = (struct timeval){ .tv_sec = 0, .tv_usec = 1 };
-		else
-			to.tv_sec = left;
-	}
+	pf_run_calculate_timeout (r, &to);
 
 	// wait for events
 	rc = select (r->max_fd+1, &r->rd_set, &r->wr_set, &r->er_set, &to);
@@ -376,7 +445,7 @@ pf_run_perform_io (pf_run_t *r)
 
 			if (conf->close_delay_sec > 0) {
 
-				ctx->close_time = time(NULL) + conf->close_delay_sec;
+				ctx->delay_finish_time = time(NULL) + conf->close_delay_sec;
 
 				// put into avail state
 				ctx->state = PF_CTX_DELAY_CLOSE;
@@ -405,7 +474,7 @@ static int pf_run_check_delayed_close (pf_run_t *r)
 
 	list_for_each_entry_safe (ctx, tmp, &r->state_list[PF_CTX_DELAY_CLOSE], link) {
 
-		if (ctx->close_time > now)
+		if (ctx->delay_finish_time > now)
 			break;
 
 		// remove from waiting state

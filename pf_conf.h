@@ -20,6 +20,7 @@ typedef struct pf_conf_s {
         // definition of the test
         uint                    no_agents;
         uint                    no_connections;
+	uint			start_delay_sec;
 	uint			close_delay_sec;
 	uint			kill_switch;
 

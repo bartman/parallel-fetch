@@ -34,8 +34,6 @@ typedef struct pf_main_info_s {
         const char *srv_port;
         uint total_connections;
         uint no_threads;
-        uint no_agents_per_thread;
-        uint close_delay_sec;
 
         // thread config and status
         const pf_conf_t        *conf;
@@ -54,8 +52,37 @@ static void pf_display (pf_main_info_t *minfo);
 static void show_help(void)
 {
 	printf ("pf [-t <threads>] [-a <agents>] "
-		"[-c <connections>] [-d <delay>] "
+		"[-c <connections>] [-d <what>=<delay>] "
 		"[-h] <host> <port>\n");
+}
+
+static void parse_delay_arg (const char *optarg,  pf_conf_t *conf)
+{
+	struct {
+		const char *name;
+		uint *value;
+	} table[] = {
+		{ "start",	&conf->start_delay_sec },
+		{ "close",	&conf->close_delay_sec },
+		{ NULL,		NULL }
+	}, *p;
+
+	for (p=table; p->name; p++) {
+		uint nlen = strlen (p->name);
+		if (strncmp (p->name, optarg, nlen)
+				|| optarg[nlen] != '=')
+			continue;
+
+		*(p->value) = atoi(optarg+nlen+1);
+		return;
+	}
+
+	fprintf (stderr, "Delay format: -d <what>=<delay>\n"
+			"Valid for <what>: ");
+	for (p=table; p->name; p++)
+		fprintf (stderr, "%s ", p->name);
+	fprintf (stderr, "\n");
+	exit(EXIT_FAILURE);
 }
 
 int
@@ -78,7 +105,7 @@ main (int argc, char *argv[])
         minfo.srv_addr = NULL;
         minfo.srv_port = NULL;
         minfo.no_threads = 10;
-        minfo.no_agents_per_thread = 10;
+        conf.no_agents = 10;	// per thread
         minfo.total_connections = 100000;
 
 	while ((opt = getopt (argc, argv, "t:a:c:d:h")) != -1) {
@@ -90,13 +117,13 @@ main (int argc, char *argv[])
 			minfo.no_threads = atoi(optarg);
 			break;
 		case 'a':
-			minfo.no_agents_per_thread = atoi(optarg);
+			conf.no_agents = atoi(optarg);
 			break;
 		case 'c':
 			minfo.total_connections = atoi(optarg);
 			break;
 		case 'd':
-			minfo.close_delay_sec = atoi(optarg);
+			parse_delay_arg (optarg, &conf);
 			break;
 		default:
 			show_help();
@@ -106,7 +133,7 @@ main (int argc, char *argv[])
 
 	if ((argc - optind) != 2)
 		BAIL ("need to provide <host> and <port>");
-	if (minfo.no_agents_per_thread < 1)
+	if (conf.no_agents < 1)
 		BAIL ("need at least one agent per thread");
 	if (minfo.no_threads < 1)
 		BAIL ("need at least one thread");
@@ -119,12 +146,16 @@ main (int argc, char *argv[])
 	printf ("connect to %s:%s\n"
 		"%9u threads\n"
 		"%9u agents per thread\n"
-		"%9u total connections\n",
+		"%9u total connections\n"
+		"%9u sec delay before a start\n"
+		"%9u sec delay before a close\n",
 		minfo.srv_addr,
 		minfo.srv_port,
 		minfo.no_threads,
-		minfo.no_agents_per_thread,
-		minfo.total_connections);
+		conf.no_agents,
+		minfo.total_connections,
+		conf.start_delay_sec,
+		conf.close_delay_sec);
 
         // configure main info structure
         minfo.conf = &conf;
@@ -152,9 +183,7 @@ main (int argc, char *argv[])
         conf.do_closing = http_closing;
 
         // set number of connections
-        conf.no_agents = minfo.no_agents_per_thread;
 	conf.no_connections = minfo.total_connections / minfo.no_threads;
-	conf.close_delay_sec = minfo.close_delay_sec;
 	conf.kill_switch = 0;
 
         // threading
