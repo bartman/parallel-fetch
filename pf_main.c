@@ -31,8 +31,6 @@ int dbg_level = 0;
 typedef struct pf_main_info_s {
 
         // application configuration
-        const char *srv_addr;
-        const char *srv_port;
         uint total_connections;
         uint no_threads;
 
@@ -52,9 +50,66 @@ static void pf_display (pf_main_info_t *minfo);
 
 static void show_help(void)
 {
-	printf ("pf [-t <threads>] [-a <agents>] "
+	printf ("pf [-h] [-t <threads>] [-a <agents>] "
 		"[-c <connections>] [-d <what>=<delay>] "
-		"[-h] <host> <port>\n");
+		"<url>\n"
+		"\n"
+		"Options:\n"
+		"  -h              print this help\n"
+		"  -t <num>        threads to run\n"
+		"  -a <num>        agents per thread\n"
+		"  -c <num>        total connections\n"
+		"  -d start:<num>  delay for # sec after connect\n"
+		"  -d close:<num>  delay for # seconds before close\n"
+		"\n"
+		"Url format:\n"
+		"  [http://]<host>:[<port>[/<path>]]\n");
+}
+
+#define HTTP_PREFIX "http://"
+
+static void parse_url_arg (const char *optarg, pf_conf_t *conf)
+{
+	char *buf = strdup(optarg);
+	char *p, *q;
+	char *addr, *port = "80", *path = NULL;
+	ulong tmp;
+	int rc;
+
+	p = buf;
+	if (!strncasecmp(p, HTTP_PREFIX, strlen(HTTP_PREFIX)))
+		p += strlen(HTTP_PREFIX);
+
+	addr = p;
+
+	q = index(p, ':');
+	if (q) {
+		*q = 0;
+		port = p = q+1;
+	}
+
+	q = index(p, '/');
+	if (q) {
+		path = strdup(q);
+		*q = 0;
+	}
+
+	// set server info
+	conf->server.sin_family = PF_INET;
+
+	rc = inet_pton (conf->server.sin_family, addr,
+			&conf->server.sin_addr);
+	if (rc<0) 
+		BAIL ("inet_pton %s", addr);
+
+	tmp = strtoul (port, NULL, 0);
+	if (tmp == ULONG_MAX) 
+		BAIL ("strtoul %s", port);
+	conf->server.sin_port = htons(tmp);
+
+	conf->path = path;
+
+	free(buf);
 }
 
 static void parse_delay_arg (const char *optarg,  pf_conf_t *conf)
@@ -94,7 +149,6 @@ main (int argc, char *argv[])
         pf_stat_t stat;
         pf_main_info_t minfo;
         pthread_t *threads;
-        ulong tmp;
         uint t;
 	int opt;
 
@@ -103,8 +157,6 @@ main (int argc, char *argv[])
         memset (&minfo, 0, sizeof (minfo));
 
         // read configuration from command line
-        minfo.srv_addr = NULL;
-        minfo.srv_port = NULL;
         minfo.no_threads = 10;
         conf.no_agents = 10;	// per thread
         minfo.total_connections = 100000;
@@ -132,8 +184,8 @@ main (int argc, char *argv[])
 		}
 	}
 
-	if ((argc - optind) != 2)
-		BAIL ("need to provide <host> and <port>");
+	if ((argc - optind) != 1)
+		BAIL ("need to provide <url>");
 	if (conf.no_agents < 1)
 		BAIL ("need at least one agent per thread");
 	if (minfo.no_threads < 1)
@@ -141,17 +193,15 @@ main (int argc, char *argv[])
 	if (minfo.total_connections < 1)
 		BAIL ("need at least one connection");
 
-        minfo.srv_addr = argv[optind];
-        minfo.srv_port = argv[optind+1];
+	parse_url_arg (argv[optind], &conf);
 
-	printf ("connect to %s:%s\n"
+	printf ("connect to %s\n"
 		"%9u threads\n"
 		"%9u agents per thread\n"
 		"%9u total connections\n"
 		"%9u sec delay before a start\n"
 		"%9u sec delay before a close\n",
-		minfo.srv_addr,
-		minfo.srv_port,
+		argv[optind],
 		minfo.no_threads,
 		conf.no_agents,
 		minfo.total_connections,
@@ -164,24 +214,12 @@ main (int argc, char *argv[])
         gettimeofday (&minfo.start_time, NULL);
         pthread_mutex_init (&stat.__lock, NULL);
 
-        // set server info
-        conf.server.sin_family = PF_INET;
-
-        rc = inet_pton (conf.server.sin_family, minfo.srv_addr, 
-                        &conf.server.sin_addr);
-        if (rc<0) 
-                BAIL ("inet_pton %s", minfo.srv_addr);
-
-        tmp = strtoul (minfo.srv_port, NULL, 0);
-        if (tmp == ULONG_MAX) 
-                BAIL ("strtoul %s", minfo.srv_port);
-        conf.server.sin_port = htons(tmp);
-
-        // set handlers
-        conf.do_connected = http_connected;
-        conf.do_recv = http_recv;
-        conf.do_send = http_send;
-        conf.do_closing = http_closing;
+	// set handlers
+	conf.do_init = http_init;
+	conf.do_connected = http_connected;
+	conf.do_recv = http_recv;
+	conf.do_send = http_send;
+	conf.do_closing = http_closing;
 
         // set number of connections
 	conf.no_connections = minfo.total_connections / minfo.no_threads;

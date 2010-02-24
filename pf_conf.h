@@ -11,7 +11,11 @@ typedef struct pf_conf_s {
         // host to connect to
         struct sockaddr_in      server;
 
+	// page part of the url to GET
+	const char             *path;
+
         // data handlers
+	int (*do_init) (struct pf_ctx_s *ctx);
         int (*do_connected) (struct pf_ctx_s *ctx);
         int (*do_send) (struct pf_ctx_s *ctx);
         int (*do_recv) (struct pf_ctx_s *ctx);

@@ -7,14 +7,18 @@
 #include "pf_ctx.h"
 #include "pf_conf.h"
 
-void
+int
 pf_ctx_init (pf_ctx_t *ctx, const pf_conf_t *conf, struct pf_stat_s *stat)
 {
+	int rc = 0;
         memset (ctx, 0, sizeof (*ctx));
         ctx->conf = conf;
         ctx->stat = stat;
         ctx->fd = -1;
 	ctx->state = PF_CTX_AVAIL;
+	if (conf->do_init)
+		rc = conf->do_init(ctx);
+	return rc;
 }
 
 void
