@@ -1,7 +1,9 @@
 
-CFLAGS=-ggdb -pg -O0 -Wall
+CFLAGS=-Wall -O2
 CPPFLAGS=-I.
 LIBS=-lpthread
+
+#CFLAGS+=-ggdb -pg -O0
 
 PROG=pf
 SRCS=pf_ctx.c pf_http.c pf_main.c pf_run.c
