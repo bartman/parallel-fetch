@@ -63,7 +63,7 @@ static void show_help(void)
 		"  -d close:<num>  delay for # seconds before close\n"
 		"\n"
 		"Url format:\n"
-		"  [http://]<host>:[<port>[/<path>]]\n");
+		"  [http://]<host>[:<port>][/<path>]\n");
 }
 
 #define HTTP_PREFIX "http://"
