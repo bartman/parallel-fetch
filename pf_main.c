@@ -144,7 +144,7 @@ static void parse_delay_arg (const char *optarg,  pf_conf_t *conf)
 int
 main (int argc, char *argv[])
 {
-        int rc;
+        int rc = 0;
         pf_conf_t conf;
         pf_stat_t stat;
         pf_main_info_t minfo;
