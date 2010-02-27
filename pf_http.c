@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "pf_dbg.h"
 #include "pf_conf.h"
 #include "pf_ctx.h"
@@ -17,6 +21,8 @@ typedef struct pf_http_s {
 	char *request;
 } pf_http_t;
 
+#define EOL "\r\n"
+
 int
 http_init (pf_ctx_t *ctx)
 {
@@ -25,10 +31,14 @@ http_init (pf_ctx_t *ctx)
 	http = malloc(sizeof(*http));
 	http->request = NULL;
 	http->req_len = asprintf(&http->request,
-			"GET %s HTTP/1.0\n"
-			"User-Agent: pf\n"
-			"\n",
-			ctx->conf->path ?: "/");
+		"GET %s HTTP/1.0"                                         EOL
+		"User-Agent: pf/0.0.1"                                    EOL
+		"Accept: text/html, text/*;q=0.5, image/*, application/*" EOL
+		"Accept-Language: en;q=1.0"                               EOL
+		"Host: %s"                                                EOL
+		EOL,
+		ctx->conf->path ?: "/",
+		inet_ntoa(ctx->conf->server.sin_addr));
 	ctx->private_data = http;
 	return 0;
 }
