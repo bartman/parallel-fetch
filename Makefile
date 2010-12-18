@@ -1,6 +1,7 @@
 
 CFLAGS=-Wall -O2
 CPPFLAGS=-I.
+LDFLAGS=
 LIBS=-lpthread
 
 #CFLAGS+=-ggdb -pg -O0
@@ -20,7 +21,7 @@ include ${EXISTING_DEPS}
 endif
 
 ${PROG}: ${OBJS}
-	${CC} ${LIBS} -o $@ $^
+	${CC} ${LDFLAGS} -o $@ $^ ${LIBS}
 
 ${OBJS}: %.o: %.c Makefile
 
